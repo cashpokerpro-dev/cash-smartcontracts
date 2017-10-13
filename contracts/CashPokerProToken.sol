@@ -160,18 +160,18 @@ contract StandardToken is ERC20, BasicToken {
 
 contract CashPokerProToken is StandardToken {
 
-  string public name = "Cash Poker Pro";
-  string public symbol = "CASH";
-  uint256 public decimals = 18;
-  
-  uint256 public INITIAL_SUPPLY = 100000000 * 1 ether;
+    string public name = "Cash Poker Pro";
+    string public symbol = "CASH";
+    uint256 public decimals = 18;
 
-  /**
-   * @dev Contructor that gives msg.sender all of existing tokens. 
-   */
-  function CashPokerProToken() {
-    totalSupply = INITIAL_SUPPLY;
-    balances[msg.sender] = INITIAL_SUPPLY;
-  }
+    uint256 public INITIAL_SUPPLY = 100000000 * 1 ether;
+
+    /**
+     * @dev Contructor that gives msg.sender all of existing tokens.
+     */
+    function CashPokerProToken() {
+        totalSupply = INITIAL_SUPPLY;
+        balances[msg.sender] = INITIAL_SUPPLY;
+    }
 
 }

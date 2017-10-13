@@ -1,4 +1,4 @@
-pragma solidity ^0.4.13;
+pragma solidity ^0.4.15;
 
 
 contract Token {
@@ -88,6 +88,7 @@ contract Ownable {
  */
 contract Pausable is Ownable {
     event Pause();
+
     event Unpause();
 
     bool public paused = false;
@@ -126,39 +127,42 @@ contract Pausable is Ownable {
     }
 }
 
-contract CashPokerProCrowdsale is Ownable, Pausable {
+
+contract CashPokerProICO is Ownable, Pausable {
     using SafeMath for uint;
 
     /* The party who holds the full token pool and has approve()'ed tokens for this crowdsale */
-    address public tokenWallet;
+    address public tokenWallet = 0x774d91ac35f4e2f94f0e821a03c6eaff8ad4c138;
 
     uint public tokensSold;
 
     uint public weiRaised;
 
+    mapping (address => uint256) public purchasedTokens;
+
     uint public investorCount;
 
-    Token public token;
+    Token public token = Token(0xA8F93FAee440644F89059a2c88bdC9BF3Be5e2ea);
 
-    uint constant minInvest = 0.01 ether;
+    uint public constant minInvest = 0.01 ether;
 
-    uint constant tokensLimit = 70000000 * 1 ether;
+    uint public constant tokensLimit = 60000000 ether;
 
-    //8 September 2017, 18:00:00
-    uint public presaleEnd = 1504893600;
+    // start and end timestamps where investments are allowed (both inclusive)
+    uint256 public startTime = 1503770400; // 26 August 2017
 
-    //26 August 2017, 26 October 2017, 31 October 2017, 5 November 2017, 10 November 2017, 14 November 2017, 18 November 2017
+    uint256 public endTime = 1504893600; // 8 September 2017
 
-    uint[7] public stageStartDates = [1503770400, 1509040800, 1509472800, 1509904800, 1510336800, 1510682400, 1511028000];
+    uint public price = 0.00017 ether;
 
-    uint[7] prices = [0.00017 * 1 ether, 0.00135 * 1 ether, 0.00145 * 1 ether, 0.00155 * 1 ether, 0.00165 * 1 ether, 0.00175 * 1 ether, 0.0034 * 1 ether];
-
-    uint[7] public stageLimits = [10000000 * 1 ether, 30000000 * 1 ether, 40000000 * 1 ether, 50000000 * 1 ether, 60000000 * 1 ether, 70000000 * 1 ether, 70000000 * 1 ether];
-
-
-    function CashPokerProCrowdsale() {
-        tokenWallet = msg.sender;
+    function CashPokerProICO(uint newStartTime, uint newEndTime, address newToken, address newTokenWallet){
+        token = Token(newToken);
+        tokenWallet = newTokenWallet;
+        startTime = newStartTime;
+        endTime = newEndTime;
     }
+
+
     /**
      * event for token purchase logging
      * @param purchaser who paid for the tokens
@@ -168,32 +172,22 @@ contract CashPokerProCrowdsale is Ownable, Pausable {
      */
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
 
-    function setToken(address newToken) onlyOwner {
-        token = Token(newToken);
-    }
-
-    function setTokenWallet(address newTokenWallet) onlyOwner {
-        tokenWallet = newTokenWallet;
-    }
-
     // fallback function can be used to buy tokens
     function() payable {
         buyTokens(msg.sender);
     }
 
     // low level token purchase function
-    function buyTokens(address beneficiary) enableToSaleTime whenNotPaused payable {
+    function buyTokens(address beneficiary) whenNotPaused payable {
+        require(startTime <= now && now <= endTime);
 
         uint weiAmount = msg.value;
 
         require(weiAmount >= minInvest);
 
-        uint stage = getStage();
-        uint tokenAmountEnable = stageLimits[stage].sub(tokensSold);
+        uint tokenAmountEnable = tokensLimit.sub(tokensSold);
 
         require(tokenAmountEnable > 0);
-
-        uint price = prices[stage];
 
         uint tokenAmount = weiAmount / price * 1 ether;
 
@@ -201,9 +195,20 @@ contract CashPokerProCrowdsale is Ownable, Pausable {
             tokenAmount = tokenAmountEnable;
             weiAmount = tokenAmount * price / 1 ether;
             msg.sender.transfer(msg.value - weiAmount);
+        }else{
+            uint countBonusAmount = tokenAmount * getCountBonus(weiAmount) / 1000;
+            uint timeBonusAmount = tokenAmount * getTimeBonus(now()) / 1000;
+
+            tokenAmount += countBonusAmount + timeBonusAmount;
+
+            if (tokenAmount > tokenAmountEnable) {
+                tokenAmount = tokenAmountEnable;
+            }
         }
 
-        if (token.balanceOf(beneficiary) == 0) investorCount++;
+        if (purchasedTokens[beneficiary] == 0) investorCount++;
+
+        purchasedTokens[beneficiary] = purchasedTokens[beneficiary].add(tokenAmount);
 
         weiRaised = weiRaised.add(weiAmount);
 
@@ -214,13 +219,31 @@ contract CashPokerProCrowdsale is Ownable, Pausable {
         TokenPurchase(msg.sender, beneficiary, weiAmount, tokenAmount);
     }
 
+    uint[] etherForCountBonus = [2 ether, 3 ether, 5 ether, 7 ether, 9 ether, 12 ether, 15 ether, 20 ether, 25 ether, 30 ether, 35 ether, 40 ether, 45 ether, 50 ether, 60 ether, 70 ether, 80 ether, 90 ether, 100 ether, 120 ether, 150 ether, 200 ether, 250 ether, 300 ether, 350 ether, 400 ether, 450 ether, 500 ether];
+
+    uint[] amountForCountBonus = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 90, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150];
+
+
+    function getCountBonus(uint weiAmount) public constant returns (uint) {
+        for (uint i = 0; i < etherForCountBonus.length; i++) {
+            if (weiAmount < etherForCountBonus[i]) return amountForCountBonus[i];
+        }
+        return amountForCountBonus[amountForCountBonus.length - 1];
+    }
+
+    function getTimeBonus(uint time) public constant returns (uint) {
+        if(time < startTime + 1 weeks) return 30;
+        if(time < startTime + 2 weeks) return 20;
+        if(time < startTime + 3 weeks) return 10;
+        return 0;
+    }
+
     function withdrawal(address to) onlyOwner {
         to.transfer(this.balance);
     }
 
     function transfer(address to, uint amount) onlyOwner {
-        uint stage = getStage();
-        uint tokenAmountEnable = stageLimits[stage].sub(tokensSold);
+        uint tokenAmountEnable = tokensLimit.sub(tokensSold);
 
         if (amount > tokenAmountEnable) amount = tokenAmountEnable;
 
@@ -228,18 +251,4 @@ contract CashPokerProCrowdsale is Ownable, Pausable {
 
         tokensSold = tokensSold.add(amount);
     }
-
-    modifier enableToSaleTime() {
-        require(!(presaleEnd <= now && now < stageStartDates[1]));
-        _;
-    }
-
-    function getStage() constant returns (uint){
-        if (now < presaleEnd) return 0;
-        for (uint i = 1; i < stageStartDates.length - 1; i++) {
-            if (now < stageStartDates[i + 1] && tokensSold < stageLimits[i]) return i;
-        }
-        return stageStartDates.length - 1;
-    }
-
 }
