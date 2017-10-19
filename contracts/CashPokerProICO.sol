@@ -1,4 +1,4 @@
-pragma solidity ^0.4.15;
+pragma solidity ^0.4.18;
 
 
 contract Token {
@@ -138,9 +138,11 @@ contract CashPokerProICO is Ownable, Pausable {
 
     uint public weiRaised;
 
-    mapping (address => uint256) public purchasedTokens;
+    mapping (address => uint256) public holdTokens;
 
-    uint public investorCount;
+    mapping (address => uint256) public purchaseTokens;
+
+    address[] public holdTokenInvestors;
 
     Token public token = Token(0xA8F93FAee440644F89059a2c88bdC9BF3Be5e2ea);
 
@@ -148,18 +150,39 @@ contract CashPokerProICO is Ownable, Pausable {
 
     uint public constant tokensLimit = 60000000 ether;
 
-    // start and end timestamps where investments are allowed (both inclusive)
-    uint256 public startTime = 1503770400; // 26 August 2017
+    // start and end timestamps where investments are allowed
+    uint256 public startTime = 1509040800; // 26 October 2017 18:00 UTC
 
-    uint256 public endTime = 1504893600; // 8 September 2017
+    uint256 public endTime = 1511719200; // 26 November 2017 18:00 UTC
 
-    uint public price = 0.00017 ether;
+    uint public price = 0.0018 ether;
 
-    function CashPokerProICO(uint newStartTime, uint newEndTime, address newToken, address newTokenWallet){
-        token = Token(newToken);
-        tokenWallet = newTokenWallet;
-        startTime = newStartTime;
-        endTime = newEndTime;
+    bool public isHoldTokens = true;
+
+    uint public investorCount;
+
+    uint public dealerBonusTokens;
+
+    uint public dealerBonusEth;
+
+    mapping (bytes32 => Promo) public promoMap;
+
+    struct Promo {
+    bool enable;
+    uint userPercentToken;
+    address dealer;
+    uint dealerPercentToken;
+    uint dealerPercentETH;
+    }
+
+    function addPromo(bytes32 promoPublicKey, uint userPercentToken, address dealer, uint dealerPercentToken, uint dealerPercentETH) public onlyOwner {
+        promoMap[promoPublicKey] = Promo(true, userPercentToken, dealer, dealerPercentToken, dealerPercentETH);
+        LogAddPromo(promoPublicKey, userPercentToken, dealer, dealerPercentToken, dealerPercentETH);
+    }
+
+    function removePromo(bytes32 promoPublicKey) public onlyOwner {
+        promoMap[promoPublicKey].enable = false;
+        LogRemovePromo(promoPublicKey);
     }
 
 
@@ -172,13 +195,17 @@ contract CashPokerProICO is Ownable, Pausable {
      */
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
 
+    event LogAddPromo(bytes32 indexed promoPublicKey, uint userPercentToken, address dealer, uint dealerPercentToken, uint dealerPercentETH);
+
+    event LogRemovePromo(bytes32 indexed promoPublicKey);
+
     // fallback function can be used to buy tokens
-    function() payable {
+    function() public payable {
         buyTokens(msg.sender);
     }
 
     // low level token purchase function
-    function buyTokens(address beneficiary) whenNotPaused payable {
+    function buyTokens(address beneficiary) public whenNotPaused payable {
         require(startTime <= now && now <= endTime);
 
         uint weiAmount = msg.value;
@@ -195,9 +222,46 @@ contract CashPokerProICO is Ownable, Pausable {
             tokenAmount = tokenAmountEnable;
             weiAmount = tokenAmount * price / 1 ether;
             msg.sender.transfer(msg.value - weiAmount);
-        }else{
+
+
+            if (msg.data.length > 0) {
+                Promo storage promo = promoMap[sha3(msg.data)];
+                if (promo.enable && promo.dealerPercentETH > 0) {
+                    uint dealerEthAmount = weiAmount * promo.dealerPercentETH / 10000;
+                    promo.dealer.transfer(dealerEthAmount);
+                    weiAmount -= dealerEthAmount;
+                    dealerBonusEth += dealerEthAmount;
+                }
+            }
+        }
+        else {
             uint countBonusAmount = tokenAmount * getCountBonus(weiAmount) / 1000;
-            uint timeBonusAmount = tokenAmount * getTimeBonus(now()) / 1000;
+            uint timeBonusAmount = tokenAmount * getTimeBonus(now) / 1000;
+
+            if (msg.data.length > 0) {
+                promo = promoMap[sha3(msg.data)];
+                if (promo.enable) {
+
+                    if (promo.dealerPercentToken > 0) {
+                        uint dealerTokenAmount = tokenAmount * promo.dealerPercentToken / 10000;
+                        sendTokens(promo.dealer, dealerTokenAmount);
+                        dealerBonusTokens += dealerTokenAmount;
+                    }
+
+                    if (promo.dealerPercentETH > 0) {
+                        dealerEthAmount = weiAmount * promo.dealerPercentETH / 10000;
+                        promo.dealer.transfer(dealerEthAmount);
+                        weiAmount -= dealerEthAmount;
+                        dealerBonusEth += dealerEthAmount;
+                    }
+
+                    if (promo.userPercentToken > 0) {
+                        uint promoBonusAmount = tokenAmount * promo.userPercentToken / 10000;
+                        tokenAmount += promoBonusAmount;
+                    }
+
+                }
+            }
 
             tokenAmount += countBonusAmount + timeBonusAmount;
 
@@ -206,17 +270,28 @@ contract CashPokerProICO is Ownable, Pausable {
             }
         }
 
-        if (purchasedTokens[beneficiary] == 0) investorCount++;
 
-        purchasedTokens[beneficiary] = purchasedTokens[beneficiary].add(tokenAmount);
+        if (purchaseTokens[beneficiary] == 0) investorCount++;
+
+        purchaseTokens[beneficiary] = purchaseTokens[beneficiary].add(tokenAmount);
+
+        sendTokens(beneficiary, tokenAmount);
 
         weiRaised = weiRaised.add(weiAmount);
 
-        require(token.transferFrom(tokenWallet, beneficiary, tokenAmount));
+        TokenPurchase(msg.sender, beneficiary, weiAmount, tokenAmount);
+    }
+
+    function sendTokens(address to, uint tokenAmount) internal {
+        if (isHoldTokens) {
+            if (holdTokens[to] == 0) holdTokenInvestors.push(to);
+            holdTokens[to] = holdTokens[to].add(tokenAmount);
+        }
+        else {
+            require(token.transferFrom(tokenWallet, to, tokenAmount));
+        }
 
         tokensSold = tokensSold.add(tokenAmount);
-
-        TokenPurchase(msg.sender, beneficiary, weiAmount, tokenAmount);
     }
 
     uint[] etherForCountBonus = [2 ether, 3 ether, 5 ether, 7 ether, 9 ether, 12 ether, 15 ether, 20 ether, 25 ether, 30 ether, 35 ether, 40 ether, 45 ether, 50 ether, 60 ether, 70 ether, 80 ether, 90 ether, 100 ether, 120 ether, 150 ether, 200 ether, 250 ether, 300 ether, 350 ether, 400 ether, 450 ether, 500 ether];
@@ -232,23 +307,36 @@ contract CashPokerProICO is Ownable, Pausable {
     }
 
     function getTimeBonus(uint time) public constant returns (uint) {
-        if(time < startTime + 1 weeks) return 30;
-        if(time < startTime + 2 weeks) return 20;
-        if(time < startTime + 3 weeks) return 10;
+        if (time < startTime + 1 weeks) return 30;
+        if (time < startTime + 2 weeks) return 20;
+        if (time < startTime + 3 weeks) return 10;
         return 0;
     }
 
-    function withdrawal(address to) onlyOwner {
+    function withdrawal(address to) public onlyOwner {
         to.transfer(this.balance);
     }
 
-    function transfer(address to, uint amount) onlyOwner {
-        uint tokenAmountEnable = tokensLimit.sub(tokensSold);
+    uint public sendInvestorIndex = 0;
 
-        if (amount > tokenAmountEnable) amount = tokenAmountEnable;
+    function finalSendTokens() public onlyOwner {
+        for (uint i = sendInvestorIndex; i < holdTokenInvestors.length; i++) {
+            address investor = holdTokenInvestors[i];
+            uint tokenAmount = holdTokens[investor];
 
-        require(token.transferFrom(tokenWallet, to, amount));
+            if (tokenAmount > 0) {
+                holdTokens[investor] = 0;
+                require(token.transferFrom(tokenWallet, investor, tokenAmount));
+            }
 
-        tokensSold = tokensSold.add(amount);
+            if (msg.gas < 100000) {
+                sendInvestorIndex = i;
+                return;
+            }
+        }
+
+        sendInvestorIndex = holdTokenInvestors.length;
+        isHoldTokens = false;
     }
+
 }

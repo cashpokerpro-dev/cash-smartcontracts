@@ -132,28 +132,25 @@ contract CashPokerProPreICO is Ownable, Pausable {
     using SafeMath for uint;
 
     /* The party who holds the full token pool and has approve()'ed tokens for this crowdsale */
-    address public tokenWallet = 0x774d91ac35f4e2f94f0e821a03c6eaff8ad4c138;
+    address public tokenWallet;
 
     uint public tokensSold;
 
     uint public weiRaised;
 
-    mapping (address => uint256) public purchasedTokens;
-
     uint public investorCount;
 
-    Token public token = Token(0xA8F93FAee440644F89059a2c88bdC9BF3Be5e2ea);
+    Token public token;
 
-    uint public constant minInvest = 0.01 ether;
+    uint constant minInvest = 0.01 ether;
 
-    uint public constant tokensLimit = 8000000 * 1 ether;
+    uint constant tokensLimit = 10000000 * 1 ether;
 
     // start and end timestamps where investments are allowed (both inclusive)
     uint256 public startTime = 1503770400; // 26 August 2017
-
     uint256 public endTime = 1504893600; // 8 September 2017
 
-    uint public price = 0.00017 * 1 ether;
+    uint price = 0.00017 * 1 ether;
 
     /**
      * event for token purchase logging
@@ -164,14 +161,52 @@ contract CashPokerProPreICO is Ownable, Pausable {
      */
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
 
+    function CashPokerProPreICO() {
+        tokenWallet = msg.sender;
+    }
+
+    function setToken(address newToken) onlyOwner {
+        token = Token(newToken);
+    }
+
+    function setTokenWallet(address newTokenWallet) onlyOwner {
+        tokenWallet = newTokenWallet;
+    }
+
     // fallback function can be used to buy tokens
     function() payable {
         buyTokens(msg.sender);
     }
 
     // low level token purchase function
-    function buyTokens(address beneficiary) payable {
+    function buyTokens(address beneficiary) whenNotPaused payable {
+        require(startTime <= now && now <= endTime);
 
+        uint weiAmount = msg.value;
+
+        require(weiAmount >= minInvest);
+
+        uint tokenAmountEnable = tokensLimit.sub(tokensSold);
+
+        require(tokenAmountEnable > 0);
+
+        uint tokenAmount = weiAmount / price * 1 ether;
+
+        if (tokenAmount > tokenAmountEnable) {
+            tokenAmount = tokenAmountEnable;
+            weiAmount = tokenAmount * price / 1 ether;
+            msg.sender.transfer(msg.value - weiAmount);
+        }
+
+        if (token.balanceOf(beneficiary) == 0) investorCount++;
+
+        weiRaised = weiRaised.add(weiAmount);
+
+        require(token.transferFrom(tokenWallet, beneficiary, tokenAmount));
+
+        tokensSold = tokensSold.add(tokenAmount);
+
+        TokenPurchase(msg.sender, beneficiary, weiAmount, tokenAmount);
     }
 
     function withdrawal(address to) onlyOwner {
