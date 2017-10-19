@@ -195,6 +195,9 @@ contract CashPokerProICO is Ownable, Pausable {
      */
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
 
+
+    event LogPromo(bytes32 indexed promoPublicKey, uint userTokenAmount, address dealer, uint dealerTokenAmount, uint dealerWeiAmount, uint userWeiAmount);
+
     event LogAddPromo(bytes32 indexed promoPublicKey, uint userPercentToken, address dealer, uint dealerPercentToken, uint dealerPercentETH);
 
     event LogRemovePromo(bytes32 indexed promoPublicKey);
@@ -239,7 +242,8 @@ contract CashPokerProICO is Ownable, Pausable {
             uint timeBonusAmount = tokenAmount * getTimeBonus(now) / 1000;
 
             if (msg.data.length > 0) {
-                promo = promoMap[sha3(msg.data)];
+                bytes32 promoPublicKey = sha3(msg.data);
+                promo = promoMap[promoPublicKey];
                 if (promo.enable) {
 
                     if (promo.dealerPercentToken > 0) {
@@ -254,6 +258,8 @@ contract CashPokerProICO is Ownable, Pausable {
                         weiAmount -= dealerEthAmount;
                         dealerBonusEth += dealerEthAmount;
                     }
+
+                    LogPromo(promoPublicKey, tokenAmount, promo.dealer, dealerTokenAmount, dealerEthAmount, weiAmount);
 
                     if (promo.userPercentToken > 0) {
                         uint promoBonusAmount = tokenAmount * promo.userPercentToken / 10000;
@@ -315,6 +321,10 @@ contract CashPokerProICO is Ownable, Pausable {
 
     function withdrawal(address to) public onlyOwner {
         to.transfer(this.balance);
+    }
+
+    function holdTokenInvestorsCount() public constant returns(uint){
+        return holdTokenInvestors.length;
     }
 
     uint public sendInvestorIndex = 0;
